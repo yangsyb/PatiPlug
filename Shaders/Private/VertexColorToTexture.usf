@@ -1,0 +1,78 @@
+#pragma once
+#include "/Engine/Public/Platform.ush"
+#include "/Engine/Private/Common.ush"
+
+RWTexture2D<float4> OutputTexture;
+StructuredBuffer<float2> InputTriangleVertexUVs;
+StructuredBuffer<float4> InputVerticesRGBA;
+
+
+[numthreads(ThreadGroupSizeX, ThreadGroupSizeY, ThreadGroupSizeZ)]
+void VertexColorToTextureCS(
+    uint3 GroupID : SV_GroupID,
+    uint3 DispatchThreadID : SV_DispatchThreadID,
+    uint3 GroupThreadID : SV_GroupThreadID,
+    uint GroupIndex : SV_GroupIndex
+	)
+{
+    float2 VertexPixel0 = float2(InputTriangleVertexUVs[GroupID.x * 3].x * 4096, InputTriangleVertexUVs[GroupID.x * 3].y * 4096);
+    float2 VertexPixel1 = float2(InputTriangleVertexUVs[GroupID.x * 3 + 1].x * 4096, InputTriangleVertexUVs[GroupID.x * 3 + 1].y * 4096);
+    float2 VertexPixel2 = float2(InputTriangleVertexUVs[GroupID.x * 3 + 2].x * 4096, InputTriangleVertexUVs[GroupID.x * 3 + 2].y * 4096);
+
+    float4 VertexPixelColor0 = InputVerticesRGBA[GroupID.x * 3];
+    float4 VertexPixelColor1 = InputVerticesRGBA[GroupID.x * 3 + 1];
+    float4 VertexPixelColor2 = InputVerticesRGBA[GroupID.x * 3 + 2];
+
+    float XLeft = VertexPixel0.x;   if (VertexPixel1.x < XLeft)   XLeft = VertexPixel1.x;   if (VertexPixel2.x < XLeft)   XLeft = VertexPixel2.x;
+	float XRight = VertexPixel0.x;  if (VertexPixel1.x > XRight)  XRight = VertexPixel1.x;  if (VertexPixel2.x > XRight)  XRight = VertexPixel2.x;
+	float YTop = VertexPixel0.y;    if (VertexPixel1.x < YTop)    YTop = VertexPixel1.y;    if (VertexPixel2.y < YTop)    YTop = VertexPixel2.y;
+	float YBottom = VertexPixel0.y; if (VertexPixel1.x > YBottom) YBottom = VertexPixel1.y; if (VertexPixel2.y > YBottom) YBottom = VertexPixel2.y;
+
+    int XMin = (int)(XLeft), XMax = (int)(XRight), YMin = (int)(YTop), YMax = (int)(YBottom);
+
+    for (int y = YMin; y <= YMax; ++y)
+  	{
+  		for (int x = XMin; x <= XMax; ++x)
+  		{
+  			
+  			int E01 = -(x - VertexPixel0.x) * (VertexPixel1.y - VertexPixel0.y) + (y - VertexPixel0.y) * (VertexPixel1.x - VertexPixel0.x);
+  			int E12 = -(x - VertexPixel1.x) * (VertexPixel2.y - VertexPixel1.y) + (y - VertexPixel1.y) * (VertexPixel2.x - VertexPixel1.x);
+  			int E20 = -(x - VertexPixel2.x) * (VertexPixel0.y - VertexPixel2.y) + (y - VertexPixel2.y) * (VertexPixel0.x - VertexPixel2.x);
+  
+//  			if (E01 < (TopLeft01 ? 0 : 1)) continue;
+//  			if (E12 < (TopLeft12 ? 0 : 1)) continue;
+//  			if (E20 < (TopLeft20 ? 0 : 1)) continue;
+  
+  
+  			float2 S0 = VertexPixel0 - float2(x, y);
+  			float2 S1 = VertexPixel1 - float2(x, y);
+  			float2 S2 = VertexPixel2 - float2(x, y);
+  
+  			float A = abs(S1.x * S2.y - S1.y * S2.x);
+  			float B = abs(S2.x * S0.y - S2.y * S0.x);
+  			float C = abs(S0.x * S1.y - S0.y * S1.x);
+  			float S = A + B + C;
+  
+  			if (S == 0.0f) continue;
+  
+  			A = A * (1.0f / S);
+  			B = B * (1.0f / S);
+  			C = C * (1.0f / S);
+            float2 CurrentPixel = float2(YMin, XMin);
+            OutputTexture[CurrentPixel].r = VertexPixelColor0.r * A + VertexPixelColor1.r * B + VertexPixelColor2.r * C;
+            OutputTexture[CurrentPixel].g = VertexPixelColor0.g * A + VertexPixelColor1.g * B + VertexPixelColor2.g * C;
+            OutputTexture[CurrentPixel].b = VertexPixelColor0.b * A + VertexPixelColor1.b * B + VertexPixelColor2.b * C;
+            OutputTexture[CurrentPixel].a = VertexPixelColor0.a * A + VertexPixelColor1.a * B + VertexPixelColor2.a * C;
+//  			float depth = (InTriangle.NDCVertices[0].z * a + InTriangle.NDCVertices[1].z * b + InTriangle.NDCVertices[2].z * c) * 0.5 + 0.5;
+  			// 			float RerangedDepth = (depth - 0.9) * 10;
+//  			float LinearDepth = (2.0f * NearPlane * FarPlane) / (FarPlane + NearPlane - depth * (FarPlane - NearPlane));
+//  			float ShowDepth = LinearDepth / FarPlane;
+//  			int curr = y * Width + x;
+//  			if (ShowDepth < Buffer[curr])
+//  			{
+//  				Buffer[curr] = ShowDepth;
+//  			}
+  		}
+ 	}
+
+}

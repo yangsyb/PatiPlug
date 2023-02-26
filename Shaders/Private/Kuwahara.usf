@@ -1,0 +1,184 @@
+#pragma once
+//#include "/Engine/Public/Platform.ush"
+#include "/Engine/Private/Common.ush"
+
+Texture2D InputSceneTexture;
+Texture2D InputDepthTexture;
+SamplerState InputSampler;
+uint Width;
+uint Height;
+
+float4 GetKernelMeanAndVariance(
+    in Texture2D InSceneTex,
+    in SamplerState InSceneTexSampler,
+    in float2 UV,
+    in float2 TexelSize,
+    in int2 SampleRect,
+    in float2x2 RotationMatrix,
+    in float2 Quadrants
+)
+{
+    float3 Mean = float3(0, 0, 0);
+    float3 Variance = float3(0, 0, 0);
+    for(int i = 0; i < SampleRect.x; i++)
+    {
+        for(int j = 0; j < SampleRect.y; j++)
+        {
+            float2 Offset = int2(i, j) * TexelSize * Quadrants;
+            Offset = mul(Offset, RotationMatrix);
+            //float4 PixelColor = InSceneTex.SampleLevel(InSceneTexSampler, UV + Offset, 0);
+            float3 PixelColor = Texture2DSample(InputSceneTexture, InputSampler, UV + Offset).rgb;
+            Mean += PixelColor.rgb;
+            Variance += PixelColor.rgb * PixelColor.rgb;
+        }
+    }
+    Mean /= SampleRect.x * SampleRect.y;
+    Variance = Variance / (SampleRect.x * SampleRect.y) - Mean * Mean;
+    float TotalVariance = Variance.r + Variance.g + Variance.b;
+    return float4(Mean.r, Mean.g, Mean.b, TotalVariance);
+}
+
+float4 GetKernelMeanAndVariance2(
+    in Texture2D InSceneTex,
+    in SamplerState InSceneTexSampler,
+    in float2 UV,
+    in float2 TexelSize,
+    in float4 Range,
+    in float2x2 RotationMatrix
+)
+{
+    float3 Mean = float3(0, 0, 0);
+    float3 Variance = float3(0, 0, 0);
+    float Samples = 0;
+    for (int x = Range.x; x <= Range.y; x++)
+    {
+        for (int y = Range.z; y <= Range.w; y++)
+        {
+            float2 Offset = mul(float2(x, y) * TexelSize, RotationMatrix);
+            float3 PixelColor = InSceneTex.SampleLevel(InSceneTexSampler, UV + Offset, 0);
+            Mean += PixelColor.rgb;
+            Variance += PixelColor.rgb * PixelColor.rgb;
+            Samples++;
+        }
+
+    }
+    Mean /= Samples;
+    Variance = Variance / Samples - Mean * Mean;
+    float TotalVariance = Variance.r + Variance.g + Variance.b;
+    return float4(Mean.r, Mean.g, Mean.b, TotalVariance);
+}
+
+float GetPixelAngle(
+    in Texture2D InSceneTex,
+    in SamplerState InSceneTexSampler,
+    in float2 UV,
+    in float2 TexelSize
+)
+{
+    float GradientX = 0;
+    float GradientY = 0;
+    float SobelX[9] = {-1, -2, -1, 0, 0, 0, 1, 2, 1};
+    float SobelY[9] = {-1, 0, 1, -2, 0, 2, -1, 0, 1};
+    int i = 0;
+
+    for(int x = -1; x <= 1; x++)
+    {
+        for(int y = -1; y <= 1; y++)
+        {
+            float2 Offset = float2(x, y) * TexelSize;
+            //float3 PixelColor = InSceneTex.SampleLevel(InSceneTexSampler, UV + Offset, 0);
+            float3 PixelColor = Texture2DSample(InputSceneTexture, InputSampler, UV + Offset).rgb;
+            float PixelValue = dot(PixelColor, float3(0.3,0.59,0.11));
+        
+            GradientX += PixelValue * SobelX[i];
+            GradientY += PixelValue * SobelY[i];
+            i++;
+        }
+    }
+
+    return atan(GradientY / GradientX);
+}
+
+//float4 SvPosition : SV_POSITION, out
+//float4 OutColor : SV_Target0
+
+struct FPostProcessMaterialVSToPS
+{
+    float4 Position : SV_POSITION;
+};
+
+void KuwaharaVS(
+	in float4 InPosition : ATTRIBUTE0,
+	out FPostProcessMaterialVSToPS Output
+	)
+{
+    Output = (FPostProcessMaterialVSToPS) 0;
+    DrawRectangle(InPosition, Output.Position);
+}
+
+void KuwaharaPS(
+//	noperspective float4 UVAndScreenPos : TEXCOORD0,
+//    float4 SvPosition : SV_POSITION,
+    in FPostProcessMaterialVSToPS Input,
+    out float4 OutColor : SV_Target0
+//    float4 SvPosition : SV_POSITION,
+//    out float4 OutColor : SV_Target0
+)
+{
+    OutColor = 0;
+//    float2 UV = UVAndScreenPos.xy;
+    float4 SvPosition = Input.Position;
+    float2 UV = SvPosition.xy * View.BufferSizeAndInvSize.zw;
+
+    //float2 TexelSize = View.BufferSizeAndInvSize.zw;
+    float2 TexelSize = float2(1.f, 1.f) / float2(4000.f, 4000.f);
+
+    float4 Range;
+    
+//    float DeviceZ = InputDepthTexture.SampleLevel(InputSampler, UV, 0).r;
+//    float PixelDepth = ConvertFromDeviceZ(DeviceZ);
+//    float MaxDepth = 3000;
+//    PixelDepth = PixelDepth / MaxDepth;
+//    PixelDepth = clamp(PixelDepth, 0, 1);
+//    int SampleLength = 5 * (1 - PixelDepth);
+//    SampleLength = SampleLength < 1 ? 1 : SampleLength;
+//    SampleLength += 2;
+//    SampleLength = 3;
+    const int2 SampleRect = int2(3, 3);
+
+    float Angle = GetPixelAngle(InputSceneTexture, InputSampler, UV, TexelSize);
+    float2x2 RotationMatrix = float2x2(cos(Angle), -sin(Angle), sin(Angle), cos(Angle));
+    //float2x2 RotationMatrix = float2x2(1, 1, 1, 1);
+
+    
+    float4 MeanAndVariance[4];
+    //Range = float4(-SampleRect.x, 0, -SampleRect.y, 0);
+    //MeanAndVariance[0] = GetKernelMeanAndVariance2(InputSceneTexture, InputSampler, UV, TexelSize, Range, RotationMatrix);
+    //Range = float4(0, SampleRect.x, -SampleRect.y, 0);
+    //MeanAndVariance[1] = GetKernelMeanAndVariance2(InputSceneTexture, InputSampler, UV, TexelSize, Range, RotationMatrix);
+    //Range = float4(-SampleRect.x, 0, 0, SampleRect.y);
+    //MeanAndVariance[2] = GetKernelMeanAndVariance2(InputSceneTexture, InputSampler, UV, TexelSize, Range, RotationMatrix);
+    //Range = float4(0, SampleRect.x, 0, SampleRect.y);
+    //MeanAndVariance[3] = GetKernelMeanAndVariance2(InputSceneTexture, InputSampler, UV, TexelSize, Range, RotationMatrix);
+    MeanAndVariance[0] = GetKernelMeanAndVariance(InputSceneTexture, InputSampler, UV, TexelSize, SampleRect, RotationMatrix, float2(-1, -1));
+    MeanAndVariance[1] = GetKernelMeanAndVariance(InputSceneTexture, InputSampler, UV, TexelSize, SampleRect, RotationMatrix, float2( 1, -1));
+    MeanAndVariance[2] = GetKernelMeanAndVariance(InputSceneTexture, InputSampler, UV, TexelSize, SampleRect, RotationMatrix, float2(-1,  1));
+    MeanAndVariance[3] = GetKernelMeanAndVariance(InputSceneTexture, InputSampler, UV, TexelSize, SampleRect, RotationMatrix, float2( 1,  1));
+
+    float3 FinalColor = MeanAndVariance[0].rgb;
+    float MinimumVariance = MeanAndVariance[0].a;
+    for(int i = 1; i < 4; i++)
+    {
+        if (MeanAndVariance[i].a < MinimumVariance)
+        {
+            FinalColor = MeanAndVariance[i].rgb;
+            MinimumVariance = MeanAndVariance[i].a;
+        }
+    }
+    OutColor = float4(FinalColor, 1);
+    
+//	float2 UV = UVAndScreenPos.xy;
+//    float2 PixelPos = SvPosition.xy;
+//    float Rnd = PseudoRandom(PixelPos);
+//    float2 Offset = float2(1.0f / float(Width), 1.0f / float(Height));
+}
